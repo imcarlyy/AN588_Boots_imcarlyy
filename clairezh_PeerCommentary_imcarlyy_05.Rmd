@@ -1,0 +1,241 @@
+---
+title: "AN588_Boots_imcarlyy"
+author: "Carla Rojas"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+    toc: true
+    toc_depth: 2
+date: "2025-04-14"
+---
+```{r}
+install.packages("ggplot2", repos = "https://cloud.r-project.org/")
+```
+
+**Claire: Any comments I make will start with "Claire:" for ease of navigation!**
+
+# Bootstrapping Standard Errors and CIs for Linear Models 
+
+When we initially discussed the central limit theorem and confidence intervals, we showed how we could use bootstrapping to estimate standard errors and confidence intervals around certain parameter values, like the mean. Using bootstrapping, we could also do the same for estimating standard errors and CIs around regression parameters, such as β  coefficients.
+
+## [1] Using the “KamilarAndCooperData.csv” dataset, run a linear regression looking at log(HomeRange_km2) in relation to log(Body_mass_female_mean) and report your β coeffiecients (slope and intercept).
+
+```{r}
+library(curl)
+f <- curl("https://raw.githubusercontent.com/fuzzyatelin/fuzzyatelin.github.io/refs/heads/master/AN588_Spring25/KamilarAndCooperData.csv")
+d <- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = TRUE)
+head(d)
+```
+
+```{r}
+m1 <- lm(data=d, formula = log(HomeRange_km2) ~ log(Body_mass_female_mean))
+summary(m1)
+```
+
+Our coefficient report: 
+Slope β coeffiecients: 1.03643
+Intercept β coeffiecients: -9.44123 
+
+Claire: Looks good!
+
+## [2] Then, use bootstrapping to sample from your data 1000 times with replacement, each time fitting the same model and calculating the same coefficients. This generates a sampling distribution for each β coefficient.
+
+```{r}
+set.seed(123)  # For reproducibility (this is optional guys but I found it to be helpful)
+
+# Claire: I also a seed, just so I could mess around with the function. Also nice for anyone trying to review your code (i.e., me lol)
+
+boot_results <- data.frame(intercept = numeric(0), slope = numeric(0))
+
+for (i in 1:1000) {
+  bootsample <- d[sample(nrow(d), replace = TRUE), ]
+  model <- lm(log(HomeRange_km2) ~ log(Body_mass_female_mean), data = bootsample)
+  coefs <- coef(model)
+  boot_results[i, ] <- coefs  # cleaner indexing instead of rbind (faster too)
+}
+
+```
+
+Claire: I bootstrapped in a similar way. I used rbind instead of setting up an empty dataframe, but I like your method more - it's definitely cleaner. In your annotation, maybe you could notate what exactly the boot_results dataframe is for? I had a bit of trouble figuring it out.
+
+### Estimate the standard error for each of your β coefficients as the standard deviation of the sampling distribution from your bootstrap and determine the 95% CI for each of your β coefficients based on the appropriate quantiles from your sampling distribution.
+
+Estimation of SE: 
+```{r}
+boot_se <- apply(boot_results, 2, sd)
+boot_se
+```
+
+Determining the 95% CIs: 
+```{r}
+boot_ci <- apply(boot_results, 2, quantile, probs = c(0.025, 0.975))
+boot_ci
+```
+
+Claire: good use of the apply() function here! wish I had thought of that when running through my code. Values look right :)
+
+```{r}
+# Standard errors from lm()
+lm_se <- summary(m1)$coefficients[, "Std. Error"]
+
+# 95% Confidence intervals from lm()
+lm_ci <- confint(m1)
+
+# Combine into a comparison table
+comparison <- data.frame(
+  Coef = c("Intercept", "Slope"),
+  SE_lm = round(lm_se, 4),
+  SE_boot = round(boot_se, 4),
+  CI_lm_lower = round(lm_ci[, 1], 4),
+  CI_lm_upper = round(lm_ci[, 2], 4),
+  CI_boot_lower = round(boot_ci[1, ], 4),
+  CI_boot_upper = round(boot_ci[2, ], 4)
+)
+comparison
+```
+
+Claire: Really like the idea of presenting the comparison as a table! My only note is that creating the columns in the table as named vectors first (i.e., SE_lm <- round(lm_se, 4) and then putting SE_lm = SE_lm in the dataframe itself) might help declutter the code a little.
+
+### How does the former compare to the SE estimated from your entire dataset using the formula for standard error implemented in lm()?
+
+The bootstrapped SE's for both the intercept and slope are very similar to those estimated using the standard lm() approach. However, the bootstrapped SE seems to be slighty lower, showing a little bit more of variablitity than what is assumed under the standard approach.
+
+
+### How does the latter compare to the 95% CI estimated from your entire dataset?
+
+```{r}
+# Finding the 95% CIs estimated from the original model:
+og_CIs <- confint(m1)
+og_CIs
+```
+
+The 95% CIs from `lm()` are a bit more narrow than the ones from bootstrapping. That makes sense because `lm()` uses math formulas based on assumptions, while bootstrapping just watches what happens when we resample the real data. The bootstrap CIs give us a slightly more cautious (but possibly more realistic) sense of uncertainty.
+
+Claire: Because you already present your original confidence intervals in the table, I don't think you need to do it again as a separate code chunk! Also, you say that the "CIs from `lm()` are a bit more narrow than the ones from bootstrapping", but it seems in your data that they're wider. Your reasoning for why the bootstrapped ones would be narrower makes sense, but I would just double check the comparison!
+
+## EXTRA CREDIT
+
+Write a FUNCTION that takes as its arguments a dataframe, “d”, a linear model, “m” (as a character string, e.g., “logHR~logBM”), a user-defined confidence interval level, “conf.level” (with default = 0.95), and a number of bootstrap replicates, “n” (with default = 1000). Your function should return a dataframe that includes: beta coefficient names; beta coefficients, standard errors, and upper and lower CI limits for the linear model based on your entire dataset; and mean beta coefficient estimates, SEs, and CI limits for those coefficients based on your bootstrap.
+
+```{r}
+bootstrap_lm_summary <- function(d, m, conf.level = 0.95, n = 1000) {
+  # Convert string to formula
+  formula <- as.formula(m)
+  
+  # Fit the original model
+  original_model <- lm(formula, data = d)
+  original_summary <- summary(original_model)
+  original_coef <- coef(original_model)
+  original_se <- original_summary$coefficients[, "Std. Error"]
+  original_ci <- confint(original_model, level = conf.level)
+  
+  # Set up bootstrap
+  boot_results <- matrix(NA, nrow = n, ncol = length(original_coef))
+  
+  # Claire: admittedly, I'm not good with data organization or writing functions, but what's the function of setting up a matrix here vs. a dataframe?
+  
+  colnames(boot_results) <- names(original_coef)
+  
+  for (i in 1:n) {
+    bootsample <- d[sample(nrow(d), replace = TRUE), ]
+    model <- lm(formula, data = bootsample)
+    boot_results[i, ] <- coef(model)
+  }
+  
+  # Bootstrap summaries
+  boot_means <- apply(boot_results, 2, mean)
+  boot_ses <- apply(boot_results, 2, sd)
+  alpha <- (1 - conf.level) / 2
+  boot_cis <- apply(boot_results, 2, quantile, probs = c(alpha, 1 - alpha))
+  
+  # Claire: again, great use of the apply() function. I extracted all these values separately for the slope and intercept, which helped me organize my thoughts, but was definitely much more inefficient.
+  
+  # Create comparison dataframe
+  result <- data.frame(
+    Coefficient = names(original_coef),
+    Beta_lm = round(original_coef, 4),
+    SE_lm = round(original_se, 4),
+    CI_lm_lower = round(original_ci[, 1], 4),
+    CI_lm_upper = round(original_ci[, 2], 4),
+    Beta_boot = round(boot_means, 4),
+    SE_boot = round(boot_ses, 4),
+    CI_boot_lower = round(boot_cis[1, ], 4),
+    CI_boot_upper = round(boot_cis[2, ], 4)
+  )
+  
+  return(result)
+}
+```
+
+Claire: excellent function! My only thoughts here are that the dataframe is a little messy, especially in notating rows and columns, but I'm not entirely sure how to fix that. Again, maybe defining your terms before you put them all into the dataframe function (like I indicated earlier) could be helpful?
+
+This is how I would call this function on my dataset: 
+```{r}
+bootstrap_lm_summary(
+  d = d,
+  m = "log(HomeRange_km2) ~ log(Body_mass_female_mean)",
+  conf.level = 0.95,
+  n = 1000
+)
+
+```
+
+Claire: looks wonderful! great work
+
+## EXTRA EXTRA CREDIT
+
+Graph each beta value from the linear model and its corresponding mean value, lower CI and upper CI from a bootstrap as a function of number of bootstraps from 10 to 200 by 10s. HINT: the beta value from the linear model will be the same for all bootstraps and the mean beta value may not differ that much!
+
+```{r}
+library(ggplot2)
+bootstrap_trace <- function(d, m, conf.level = 0.95) {
+  formula <- as.formula(m)
+  original_model <- lm(formula, data = d)
+  original_coefs <- coef(original_model)
+  
+  n_vals <- seq(10, 200, by = 10)
+  results <- data.frame()
+
+  for (n in n_vals) {
+    boot_mat <- replicate(n, {
+      bootsample <- d[sample(nrow(d), replace = TRUE), ]
+      coef(lm(formula, data = bootsample))
+    })
+    boot_mat <- t(boot_mat) # Claire: super interesting use of the t() function! I'm curious - what is it doing here?
+    boot_means <- apply(boot_mat, 2, mean)
+    boot_cis <- apply(boot_mat, 2, quantile, probs = c((1 - conf.level)/2, 1 - (1 - conf.level)/2))
+    
+    for (name in names(original_coefs)) {
+      results <- rbind(results, data.frame(
+        n = n,
+        Coefficient = name,
+        Original = original_coefs[name],
+        Mean = boot_means[name],
+        CI_lower = boot_cis[1, name],
+        CI_upper = boot_cis[2, name]
+      ))
+    }
+  }
+
+  ggplot(results, aes(x = n, y = Mean, color = Coefficient)) +
+    geom_line() +
+    geom_ribbon(aes(ymin = CI_lower, ymax = CI_upper, fill = Coefficient), alpha = 0.2, color = NA) +
+    geom_hline(aes(yintercept = Original, linetype = Coefficient), data = unique(results[, c("Coefficient", "Original")]), color = "black", linetype = "dashed") +
+    labs(title = "Stability of Bootstrap Estimates by Sample Size",
+         x = "Number of Bootstraps",
+         y = "Beta Coefficient Estimate") +
+    theme_minimal()
+}
+```
+
+Claire: I love that you included the plotting within the function - I didn't even think of it!
+
+This is how I would call it: 
+```{r}
+bootstrap_trace(d, "log(HomeRange_km2) ~ log(Body_mass_female_mean)")
+```
+
+Claire: my only notes here are that it's a little difficult to fully comprehend the intervals of the beta1 coefficient (i.e. log(Body_mass_female_mean)), because the interval for the intercept is significantly wider. In my homework, I used `facet_wrap(~ term, scales = "free_y")` in the `ggplot()` call to try to rectify this issue and put the two plots for the coefficients side by side, but I'm not sure it did much good. Happy to talk more about this with you, just shoot me a slack message!
+
+Overall, wonderful work - I'm especially impressed by how efficient and clean all your code is. Even when I ran up against unfamiliar elements, I was able to mostly figure out their functions just based on the surrounding context, which is awesome.
